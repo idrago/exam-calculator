@@ -1,0 +1,5 @@
+# Ignore all hidden files and directories (.agents, .codex, .DS_Store, editor dirs, ...)
+.*
+
+# ...except this file itself.
+!.gitignore

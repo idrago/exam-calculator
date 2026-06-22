@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exam Calculator</title>
+<style>
+  /* ---- Design tokens -------------------------------------------------- */
+  :root{
+    --bg:        #e7e9ee;   /* page behind the device                    */
+    --case:      #14161b;   /* calculator body                           */
+    --screen:    #0c0e12;   /* display well                              */
+    --ink:       #f5f7fa;   /* primary readout                           */
+    --ink-dim:   #79828f;   /* expression / preview                      */
+    --num:       #21242c;   /* digit keys                                */
+    --num-ink:   #f3f4f6;
+    --fn:        #181b21;   /* function keys (sin, ln, ...)              */
+    --fn-ink:    #9aa3b1;
+    --op:        #262b34;   /* operator keys                             */
+    --op-ink:    #f0b35b;   /* warm amber accent                         */
+    --util-ink:  #d98a8a;   /* clear / delete                            */
+    --accent:    #f0b35b;   /* equals fill                               */
+    --accent-2:  #d99a3e;
+    --edge:      #2b303a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--bg);
+    display:flex;align-items:center;justify-content:center;
+    padding:14px;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+  }
+  .device{
+    width:100%;max-width:392px;
+    background:var(--case);
+    border-radius:22px;
+    padding:16px 16px 18px;
+    box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px rgba(0,0,0,.28);
+  }
+
+  /* ---- Display -------------------------------------------------------- */
+  .screen{
+    background:var(--screen);
+    border:1px solid var(--edge);
+    border-radius:14px;
+    padding:14px 16px 12px;
+    margin-bottom:14px;
+    text-align:right;
+    overflow:hidden;
+  }
+  .screen .expr{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:clamp(20px,7vw,28px);
+    line-height:1.25;
+    color:var(--ink);
+    min-height:1.25em;
+    word-break:break-all;
+    white-space:pre-wrap;
+  }
+  .screen .preview{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14px;
+    color:var(--ink-dim);
+    min-height:1.2em;
+    margin-top:4px;
+  }
+  .screen .preview.err{color:var(--util-ink);}
+
+  /* ---- Keypad --------------------------------------------------------- */
+  .pad{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+  button{
+    -webkit-appearance:none;appearance:none;border:none;
+    font-family:inherit;cursor:pointer;
+    border-radius:12px;
+    padding:0;height:48px;
+    font-size:16px;font-weight:600;
+    color:var(--num-ink);background:var(--num);
+    border:1px solid var(--edge);
+    transition:transform .04s ease, filter .12s ease, background .12s ease;
+    user-select:none;
+  }
+  button:hover{filter:brightness(1.12);}
+  button:active{transform:translateY(1px) scale(.985);}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+  button.fn { background:var(--fn); color:var(--fn-ink); font-size:14px; font-weight:600; }
+  button.op { background:var(--op); color:var(--op-ink); font-size:19px; }
+  button.util{ background:var(--fn); color:var(--util-ink); font-size:15px; }
+  button.mode{
+    background:var(--fn); color:var(--fn-ink);
+    font-size:12px; letter-spacing:.04em; font-weight:700;
+  }
+  button.mode .on{color:var(--accent);}
+  button.eq{
+    grid-column:span 5;
+    background:var(--accent);color:#1a1206;
+    font-size:20px;font-weight:800;height:50px;
+    border:1px solid var(--accent-2);
+  }
+  button.eq:hover{filter:brightness(1.04);}
+
+  @media (prefers-reduced-motion:reduce){
+    button{transition:none;}
+    button:active{transform:none;}
+  }
+</style>
+</head>
+<body>
+  <main class="device" role="application" aria-label="Scientific calculator" tabindex="0">
+    <div class="screen">
+      <div class="expr" id="expr" aria-live="polite">0</div>
+      <div class="preview" id="preview" aria-live="polite"></div>
+    </div>
+    <div class="pad" id="pad"></div>
+  </main>
+
+<script>
+(function(){
+"use strict";
+/* =====================================================================
+   Exam Calculator — single file, no network, no storage, no eval().
+   Math engine: tokenizer -> shunting-yard (RPN) -> stack evaluator.
+   You can read every line; nothing here reaches outside the page.
+   ===================================================================== */
+
+/* ---- 1. Math engine -------------------------------------------------- */
+const FUNCS  = new Set(['sin','cos','tan','asin','acos','atan','sqrt','ln','log','exp','abs']);
+const CONSTS = { pi: Math.PI, e: Math.E };
+const PREC   = { 'u-':4, '^':5, '*':3, '/':3, '%':3, '+':2, '-':2 };
+
+// Replace display glyphs with parser-readable ASCII / names.
+function normalize(s){
+  return s
+    .replace(/\u00D7/g,'*')   // ×
+    .replace(/\u00F7/g,'/')   // ÷
+    .replace(/\u2212/g,'-')   // −
+    .replace(/\u221A/g,' sqrt ')//√
+    .replace(/\u03C0/g,' pi '); //π
+}
+
+function tokenize(str){
+  const out=[]; let i=0;
+  const dig=c=>c>='0'&&c<='9';
+  const alp=c=>(c>='a'&&c<='z')||(c>='A'&&c<='Z');
+  while(i<str.length){
+    const c=str[i];
+    if(c===' '){i++;continue;}
+    if(dig(c)||c==='.'){
+      let j=i,dot=false;
+      while(j<str.length && (dig(str[j])||(str[j]==='.'&&!dot))){ if(str[j]==='.')dot=true; j++; }
+      out.push({t:'num',v:parseFloat(str.slice(i,j))}); i=j; continue;
+    }
+    if(alp(c)){
+      let j=i; while(j<str.length && alp(str[j])) j++;
+      out.push({t:'name',v:str.slice(i,j).toLowerCase()}); i=j; continue;
+    }
+    if('+-*/^%!()'.indexOf(c)>=0){ out.push({t:'op',v:c}); i++; continue; }
+    throw new Error('Unexpected "'+c+'"');
+  }
+  return out;
+}
+
+function toRPN(tokens){
+  const out=[], ops=[];
+  let prev=null; // 'val' | 'op' | 'open' | 'func' | null
+  const unaryCtx = ()=> prev===null||prev==='op'||prev==='open'||prev==='func';
+  // Shunting-yard core: pop operators that bind at least as tightly, then push.
+  const applyOp = (op)=>{
+    const my=PREC[op];
+    while(ops.length){
+      const top=ops[ops.length-1];
+      if(top.t!=='op') break;
+      const tp=PREC[top.v];
+      const rightAssoc = (op==='^');
+      if(tp>my || (tp===my && !rightAssoc)) out.push(ops.pop());
+      else break;
+    }
+    ops.push({t:'op',v:op});
+  };
+  let funcPending=false; // a function name must be followed immediately by "("
+  for(const tk of tokens){
+    // A function only applies to a parenthesised argument: reject e.g. √9 or
+    // sin30 (which would otherwise swallow the rest as sqrt(9+7) / sin(31)).
+    if(funcPending){
+      if(!(tk.t==='op' && tk.v==='(')) throw new Error('Expected "(" after function');
+      funcPending=false;
+    }
+    // Implicit multiplication: a completed value (number, constant, ")" or "!")
+    // directly followed by another value, a "(", or a function -> insert "*".
+    // e.g. 2pi, 2(3), 2sin(30), (1+2)(3+4).
+    const opensValue = tk.t==='num' || tk.t==='name' || (tk.t==='op' && tk.v==='(');
+    if(opensValue && prev==='val'){ applyOp('*'); }
+
+    if(tk.t==='num'){ out.push({t:'num',v:tk.v}); prev='val'; continue; }
+    if(tk.t==='name'){
+      if(FUNCS.has(tk.v)){ ops.push({t:'func',v:tk.v}); prev='func'; funcPending=true; }
+      else if(tk.v in CONSTS){ out.push({t:'num',v:CONSTS[tk.v]}); prev='val'; }
+      else throw new Error('Unknown "'+tk.v+'"');
+      continue;
+    }
+    const op=tk.v;
+    if(op==='('){ ops.push({t:'paren'}); prev='open'; continue; }
+    if(op===')'){
+      while(ops.length && ops[ops.length-1].t!=='paren') out.push(ops.pop());
+      if(!ops.length) throw new Error('Mismatched )');
+      ops.pop();
+      if(ops.length && ops[ops.length-1].t==='func') out.push(ops.pop());
+      prev='val'; continue;
+    }
+    if(op==='!'){ out.push({t:'op',v:'!'}); prev='val'; continue; } // postfix
+    if(op==='+' && unaryCtx()){ prev='op'; continue; }              // unary plus: drop
+    if(op==='-' && unaryCtx()){ ops.push({t:'op',v:'u-'}); prev='op'; continue; } // prefix
+    applyOp(op); prev='op';
+  }
+  if(funcPending) throw new Error('Expected "(" after function');
+  while(ops.length){
+    const top=ops.pop();
+    if(top.t==='paren') throw new Error('Mismatched (');
+    out.push(top);
+  }
+  return out;
+}
+
+function factorial(n){
+  if(n<0 || !Number.isInteger(n)) return NaN;
+  if(n>170) return Infinity;
+  let r=1; for(let k=2;k<=n;k++) r*=k; return r;
+}
+
+function evalRPN(rpn, deg){
+  const st=[];
+  const toR = x=> deg ? x*Math.PI/180 : x;
+  const frR = x=> deg ? x*180/Math.PI : x;
+  // Snap values within 1e-10 of an integer to that integer, so exact angles
+  // read cleanly: cos(90°)=0, sin(90°)=1, asin(0.5)=30 — not 6.1e-17 etc.
+  const clean = x=>{ if(!isFinite(x)) return x; const r=Math.round(x); return Math.abs(x-r)<1e-10 ? r : x; };
+  for(const tk of rpn){
+    if(tk.t==='num'){ st.push(tk.v); continue; }
+    if(tk.t==='func'){
+      const a=st.pop(); let r;
+      switch(tk.v){
+        case 'sin': r=clean(Math.sin(toR(a))); break;
+        case 'cos': r=clean(Math.cos(toR(a))); break;
+        case 'tan':
+          // tan is undefined at 90° + k·180° (cos=0); force Error there.
+          if(deg && Math.abs(((a%180)+180)%180 - 90) < 1e-9) r=Infinity;
+          else r=clean(Math.tan(toR(a)));
+          break;
+        case 'asin':r=clean(frR(Math.asin(a))); break;
+        case 'acos':r=clean(frR(Math.acos(a))); break;
+        case 'atan':r=clean(frR(Math.atan(a))); break;
+        case 'sqrt':r=Math.sqrt(a); break;
+        case 'ln':  r=Math.log(a); break;
+        case 'log': r=Math.log10(a); break;
+        case 'exp': r=Math.exp(a); break;
+        case 'abs': r=Math.abs(a); break;
+        default: throw new Error('fn');
+      }
+      st.push(r); continue;
+    }
+    if(tk.v==='u-'){ st.push(-st.pop()); continue; }
+    if(tk.v==='!'){ st.push(factorial(st.pop())); continue; }
+    const b=st.pop(), a=st.pop(); let r;
+    switch(tk.v){
+      case '+': r=a+b; break;
+      case '-': r=a-b; break;
+      case '*': r=a*b; break;
+      case '/': r=a/b; break;
+      case '^': r=Math.pow(a,b); break;
+      case '%': r=a%b; break; // modulo
+      default: throw new Error('op');
+    }
+    st.push(r);
+  }
+  if(st.length!==1) throw new Error('Invalid');
+  return st[0];
+}
+
+function compute(displayExpr, deg){
+  const rpn = toRPN(tokenize(normalize(displayExpr)));
+  const v = evalRPN(rpn, deg);
+  if(!isFinite(v)) throw new Error('Error');
+  return v;
+}
+
+function fmt(x){
+  const r = parseFloat(x.toPrecision(12)); // strip binary float noise
+  return String(r);
+}
+
+/* ---- 2. State + rendering ------------------------------------------- */
+let expr = '';
+let deg = true;          // angle mode: true=DEG, false=RAD
+let justEvaluated = false;
+
+const exprEl    = document.getElementById('expr');
+const previewEl = document.getElementById('preview');
+
+function render(){
+  exprEl.textContent = expr === '' ? '0' : expr;
+  previewEl.classList.remove('err');
+  if(expr===''){ previewEl.textContent=''; return; }
+  try{
+    const v = compute(expr, deg);
+    previewEl.textContent = '= ' + fmt(v);
+  }catch(_){
+    previewEl.textContent = '';
+  }
+}
+
+function insert(s){
+  if(justEvaluated){
+    // After "=", a binary/postfix operator continues from the result; anything
+    // that begins a new value (digit, ., (, function, \u221A, \u03C0, e) starts fresh.
+    const continues = /^[-+*/^!%\u2212\u00D7\u00F7]$/.test(s);
+    if(!continues) expr='';
+    justEvaluated=false;
+  }
+  if(s==='.'){
+    const run = /[0-9.]*$/.exec(expr)[0];   // trailing run of the current number
+    if(run.indexOf('.')>=0) return;         // reject a second point (1.2.3, 1..2)
+    if(run==='') s='0.';                    // start a fresh number as 0. not .
+  }
+  expr += s;
+  render();
+}
+
+function clearAll(){ expr=''; justEvaluated=false; render(); }
+function del(){ if(expr){ expr=expr.slice(0,-1); justEvaluated=false; render(); } }
+
+// Index where the trailing operand begins: a number, a parenthesised/function
+// group ending in ")", or a constant (\u03C0 / e / pi). -1 if there is none.
+function operandStart(s){
+  if(!s) return -1;
+  const last = s[s.length-1];
+  if(last===')'){                       // walk back to the matching "("
+    let depth=0, i=s.length-1;
+    for(; i>=0; i--){
+      if(s[i]===')') depth++;
+      else if(s[i]==='('){ if(--depth===0) break; }
+    }
+    if(i<0) return -1;                   // unbalanced \u2014 bail out
+    let j=i;                             // absorb a preceding function name
+    while(j>0 && /[a-zA-Z]/.test(s[j-1])) j--;
+    return j;
+  }
+  const num = s.match(/(\d*\.?\d+)$/);
+  if(num) return s.length - num[0].length;
+  if(last==='\u03C0') return s.length-1;            // \u03C0
+  const word = s.match(/([a-zA-Z]+)$/);             // e / pi
+  if(word) return s.length - word[0].length;
+  return -1;
+}
+
+function toggleSign(){
+  const start = operandStart(expr);
+  if(start<0) return;
+  const before = expr[start-1];
+  if(before==='\u2212' || before==='-'){
+    const b2 = expr[start-2];
+    if(start-1===0 || '+\u2212-\u00D7\u00F7*/^(%'.indexOf(b2)>=0){
+      expr = expr.slice(0,start-1) + expr.slice(start);   // remove leading sign
+    } else {
+      expr = expr.slice(0,start) + '\u2212' + expr.slice(start); // negate operand
+    }
+  } else {
+    expr = expr.slice(0,start) + '\u2212' + expr.slice(start);
+  }
+  justEvaluated=false; render();
+}
+
+function equals(){
+  if(expr==='') return;
+  try{
+    const v = compute(expr, deg);
+    expr = fmt(v);
+    previewEl.textContent='';
+    justEvaluated=true;
+    exprEl.textContent = expr;
+  }catch(_){
+    previewEl.classList.add('err');
+    previewEl.textContent='Error';
+  }
+}
+
+/* ---- 3. Keypad definition ------------------------------------------- */
+// kind: num | op | fn | util | mode | eq ; ins: string to insert
+const KEYS = [
+  {label:'DEG', kind:'mode', act:'mode', aria:'Angle mode'},
+  {label:'(',   kind:'op',  ins:'('},
+  {label:')',   kind:'op',  ins:')'},
+  {label:'\u232B', kind:'util', act:'del', aria:'Delete'},
+  {label:'C',   kind:'util', act:'clear', aria:'Clear all'},
+
+  {label:'sin', kind:'fn', ins:'sin('},
+  {label:'cos', kind:'fn', ins:'cos('},
+  {label:'tan', kind:'fn', ins:'tan('},
+  {label:'\u221A', kind:'op', ins:'\u221A(', aria:'square root'},
+  {label:'x\u02B8', kind:'op', ins:'^', aria:'power'},
+
+  {label:'asin',kind:'fn', ins:'asin('},
+  {label:'acos',kind:'fn', ins:'acos('},
+  {label:'atan',kind:'fn', ins:'atan('},
+  {label:'ln',  kind:'fn', ins:'ln('},
+  {label:'log', kind:'fn', ins:'log('},
+
+  {label:'7',kind:'num',ins:'7'},
+  {label:'8',kind:'num',ins:'8'},
+  {label:'9',kind:'num',ins:'9'},
+  {label:'\u03C0',kind:'op',ins:'\u03C0',aria:'pi'},
+  {label:'e', kind:'op',ins:'e',aria:'Euler number'},
+
+  {label:'4',kind:'num',ins:'4'},
+  {label:'5',kind:'num',ins:'5'},
+  {label:'6',kind:'num',ins:'6'},
+  {label:'!',kind:'op',ins:'!',aria:'factorial'},
+  {label:'mod',kind:'op',ins:'%',aria:'modulo'},
+
+  {label:'1',kind:'num',ins:'1'},
+  {label:'2',kind:'num',ins:'2'},
+  {label:'3',kind:'num',ins:'3'},
+  {label:'\u00D7',kind:'op',ins:'\u00D7',aria:'multiply'},
+  {label:'\u00F7',kind:'op',ins:'\u00F7',aria:'divide'},
+
+  {label:'0',kind:'num',ins:'0'},
+  {label:'.',kind:'num',ins:'.'},
+  {label:'\u00B1',kind:'op',act:'sign',aria:'plus minus'},
+  {label:'\u2212',kind:'op',ins:'\u2212',aria:'minus'},
+  {label:'+',kind:'op',ins:'+',aria:'plus'},
+
+  {label:'=', kind:'eq', act:'equals', aria:'equals'},
+];
+
+const pad = document.getElementById('pad');
+const modeButtons = [];
+for(const k of KEYS){
+  const b=document.createElement('button');
+  b.type='button';           // never submit a surrounding <form> (Moodle quiz)
+  b.className=k.kind;
+  b.setAttribute('aria-label', k.aria || k.label);
+  if(k.kind==='mode'){
+    b.innerHTML = '<span class="on">DEG</span> · RAD';
+    modeButtons.push(b);
+  } else {
+    b.textContent = k.label;
+  }
+  b.addEventListener('click', ()=>{
+    if(k.act==='mode')      toggleMode();
+    else if(k.act==='del')  del();
+    else if(k.act==='clear')clearAll();
+    else if(k.act==='sign') toggleSign();
+    else if(k.act==='equals')equals();
+    else insert(k.ins);
+  });
+  pad.appendChild(b);
+}
+
+function toggleMode(){
+  deg=!deg;
+  for(const b of modeButtons){
+    b.innerHTML = deg ? '<span class="on">DEG</span> · RAD'
+                      : 'DEG · <span class="on">RAD</span>';
+  }
+  render();
+}
+
+/* ---- 4. Physical keyboard ------------------------------------------- */
+// The listener is on window so the keyboard works immediately (no click
+// needed) when the calculator is standalone or in an <iframe> — the
+// recommended Moodle embedding. To stay safe when pasted *inline* into a
+// quiz page, it yields whenever the user is editing another field, so it
+// never steals keystrokes from quiz inputs.
+const device = document.querySelector('.device');
+
+// True when focus is on an editable element that is NOT our calculator.
+function editingElsewhere(el, root){
+  return !!el && el!==root && !root.contains(el) &&
+    (el.tagName==='INPUT' || el.tagName==='TEXTAREA' ||
+     el.tagName==='SELECT' || el.isContentEditable===true);
+}
+
+window.addEventListener('keydown', (ev)=>{
+  if(ev.ctrlKey || ev.metaKey || ev.altKey) return;        // leave shortcuts alone
+  if(editingElsewhere(document.activeElement, device)) return;
+  const k=ev.key;
+  // A focused calculator button handles its own Enter/Space activation.
+  if(k==='Enter' && ev.target && ev.target.tagName==='BUTTON') return;
+  if(k>='0' && k<='9'){ insert(k); ev.preventDefault(); return; }
+  switch(k){
+    case '.': insert('.'); break;
+    case '+': insert('+'); break;
+    case '-': insert('\u2212'); break;
+    case '*': insert('\u00D7'); break;
+    case '/': insert('\u00F7'); break;
+    case '^': insert('^'); break;
+    case '(': insert('('); break;
+    case ')': insert(')'); break;
+    case '%': insert('%'); break;
+    case '!': insert('!'); break;
+    case '=':
+    case 'Enter': equals(); break;
+    case 'Backspace': del(); break;
+    case 'Escape': clearAll(); break;
+    default: return;
+  }
+  ev.preventDefault();
+});
+
+render();
+})();
+</script>
+</body>
+</html>
