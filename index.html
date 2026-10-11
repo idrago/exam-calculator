@@ -44,7 +44,11 @@
 document.getElementById('open').addEventListener('click', function(ev){
   var w = window.open(this.href, '',
     'width=420,height=610,toolbar=no,location=no,menubar=no,copyhistory=no,status=no,directories=no,scrollbars=yes,resizable=yes');
-  if(w) ev.preventDefault();   // pop-up blocked: the link is followed instead
+  if(!w) return;               // pop-up blocked: the link is followed instead
+  ev.preventDefault();
+  // The content area of a pop-up can come out smaller than requested (Chrome 155
+  // on Linux: 553 px high for height=610); resize it to 420 x 610 once loaded.
+  w.addEventListener('load', function(){ w.resizeBy(420 - w.innerWidth, 610 - w.innerHeight); });
 });
 </script>
 </body>
