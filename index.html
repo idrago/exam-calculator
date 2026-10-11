@@ -2,9 +2,50 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Exam Calculator</title>
-<meta http-equiv="refresh" content="0; url=calculator.html">
-<link rel="canonical" href="calculator.html">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exam Calculator — demo</title>
+<style>
+  :root{
+    --bg:     #e7e9ee;   /* page, same as calculator.html */
+    --case:   #14161b;   /* button fill = calculator body  */
+    --accent: #f0b35b;
+    --text:   #1b1e24;
+    --dim:    #59616d;
+  }
+  body{
+    margin:0;min-height:100vh;display:flex;
+    background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  main{margin:auto;max-width:34rem;padding:24px;}
+  h1{font-size:1.6rem;margin:0 0 .4em;}
+  p{line-height:1.5;margin:0 0 1em;}
+  .open{
+    display:inline-block;padding:12px 20px;border-radius:12px;
+    background:var(--case);color:var(--accent);font-weight:700;text-decoration:none;
+  }
+  .open:hover{filter:brightness(1.25);}
+  .open:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .note{color:var(--dim);font-size:.875rem;}
+</style>
 </head>
-<body><p><a href="calculator.html">Exam Calculator</a></p></body>
+<body>
+<main>
+  <h1>Exam Calculator</h1>
+  <p>Scientific calculator in a single HTML file, built for Moodle quizzes taken in Safe Exam Browser.</p>
+  <p><a class="open" id="open" href="calculator.html">Open the calculator</a></p>
+  <p class="note">Opens a 420 × 610 px pop-up window, the way Moodle opens a File resource whose display is set
+  to “In pop-up”. With pop-ups blocked, the link opens the calculator in this tab.</p>
+  <p class="note"><a href="https://github.com/idrago/exam-calculator">Source and documentation</a></p>
+</main>
+<script>
+// The window.open() call Moodle generates for a File resource displayed
+// "In pop-up" with pop-up width 420 and height 610.
+document.getElementById('open').addEventListener('click', function(ev){
+  var w = window.open(this.href, '',
+    'width=420,height=610,toolbar=no,location=no,menubar=no,copyhistory=no,status=no,directories=no,scrollbars=yes,resizable=yes');
+  if(w) ev.preventDefault();   // pop-up blocked: the link is followed instead
+});
+</script>
+</body>
 </html>

@@ -4,7 +4,9 @@ Scientific calculator in a single HTML file, built for Moodle quizzes taken in
 Safe Exam Browser. No network requests, no storage, no `eval()`, no
 dependencies.
 
-**Live demo:** <https://idrago.github.io/exam-calculator/>
+**Live demo:** <https://idrago.github.io/exam-calculator/> opens the calculator in
+a pop-up window, as in a Moodle course. The page itself is
+[calculator.html](https://idrago.github.io/exam-calculator/calculator.html).
 
 <img src="docs/calculator.png" alt="Exam Calculator showing 2sin(30)+√(16) = 5" width="340">
 
@@ -25,27 +27,46 @@ dependencies.
 
 ## Use in a Moodle quiz
 
-The calculator is embedded with an `<iframe>` written in the text of a question
-or of a Description item (HTML source view of the editor):
+The calculator is shown either in a pop-up window or in an iframe.
+
+### Pop-up window
+
+`calculator.html` is added to the course as a File resource whose display is
+set to **In pop-up**, with pop-up width 420 and height 610. Moodle then opens
+the file in a separate browser window with:
+
+```js
+window.open(url, '', 'width=420,height=610,toolbar=no,location=no,menubar=no,copyhistory=no,status=no,directories=no,scrollbars=yes,resizable=yes');
+```
+
+Keys reach the calculator as soon as the pop-up is the active window. The live
+demo issues the same call.
+
+### Iframe
+
+An `<iframe>` is written in the text of a question or of a Description item
+(HTML source view of the editor):
 
 ```html
 <iframe src="CALCULATOR_URL" title="Scientific calculator" width="420" height="640" style="border:0;max-width:100%"></iframe>
 ```
 
 `CALCULATOR_URL` is the address of a copy of `calculator.html` that the exam
-machines can reach.
+machines can reach. Keys reach the calculator once the frame has focus, i.e.
+after a click on it.
+
+### Notes
 
 - **Size.** The page measures 420 × 602 px with an empty display. Each wrapped
-  line of a long expression adds 35 px; beyond the frame height the page
-  scrolls inside the frame.
-- **Keyboard.** Keys reach the calculator once the frame has focus, i.e. after
-  a click on it.
-- **State.** Expression, `Ans` and angle mode live in the page and reset when
-  the quiz page changes.
-- **Isolation.** The iframe keeps the calculator's stylesheet and element IDs
-  apart from the quiz page. Pasting the file's HTML directly into a question
-  is not supported: the stylesheet is global (`html`, `body`, `*`, `button`) and
-  would restyle the quiz page.
+  line of a long expression adds 35 px; beyond the height of the window or
+  frame the page scrolls.
+- **State.** Expression, `Ans` and angle mode live in the page. In an iframe
+  they reset when the quiz page changes; a pop-up keeps them until it is
+  closed.
+- **Isolation.** A pop-up or an iframe keeps the calculator's stylesheet and
+  element IDs apart from the quiz page. Pasting the file's HTML directly into a
+  question is not supported: the stylesheet is global (`html`, `body`, `*`,
+  `button`) and would restyle the quiz page.
 
 ## Keyboard
 
