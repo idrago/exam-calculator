@@ -1,80 +1,108 @@
 # Exam Calculator
 
-A single-file scientific calculator (`calculator.html`) for embedding in
-Moodle quizzes, used in Safe Exam Browser (Chromium on Windows, WebKit on
-macOS/iOS). No network, no storage, no `eval()`.
+Scientific calculator in a single HTML file, built for Moodle quizzes taken in
+Safe Exam Browser. No network requests, no storage, no `eval()`, no
+dependencies.
 
-The math engine is a classic pipeline: **tokenize → shunting-yard (RPN) →
-stack evaluator**. The UI is plain DOM, built from a `KEYS` table.
+**Live demo:** <https://idrago.github.io/exam-calculator/>
 
-## Embedding in Moodle
-
-**Embed via an `<iframe>`** (host the file and reference it in the question
-text, or use Moodle's media/file embedding). The iframe isolates the
-calculator's CSS, global names, and keyboard focus from the quiz page.
-Keyboard input reaches the calculator once the iframe has focus, i.e. after a
-click on it.
-
-Inline embedding (the file pasted into the question) is handled as follows:
-
-- The `keydown` listener is on `window`, so keys work without a click. It
-  **yields** whenever focus is in another field (`INPUT`, `TEXTAREA`,
-  `SELECT`, contenteditable), so quiz inputs keep their keystrokes, and it
-  ignores `Ctrl`/`Cmd`/`Alt` shortcuts.
-- `Enter` evaluates only when focus is on the calculator or on no element. A
-  focused button or link, on the calculator or on the quiz page, keeps its own
-  `Enter` activation.
-- **Buttons are `type="button"`**, so a key press can never submit the quiz form.
-- **All JS is wrapped in an IIFE**: no global names leak into the page.
-
-Inline embedding still shares CSS with the host page (the stylesheet uses
-`html, body, *, button` and the IDs `expr` / `preview` / `pad`); scope the CSS
-and IDs before embedding inline. Two inline copies on one page collide on IDs.
+<img src="docs/calculator.png" alt="Exam Calculator showing 2sin(30)+√(16) = 5" width="340">
 
 ## Features
 
-- `+ − × ÷`, `^` (right-assoc), `%` (modulo), `!` (factorial)
-- `sin cos tan asin acos atan`, `√`, `ln`, `log` (base 10); `exp`, `abs` in the
-  parser only (no key)
-- Constants `π`, `e`; DEG/RAD toggle
-- `Ans`: after `=`, an operator continues from the full-precision result as one
-  operand (`Ans×2`, `Ans^2`); a digit, `.`, `(`, function or constant starts a
-  new expression. `⌫` removes `Ans` as one token.
-- Results: exact integers below 2^53 in full; otherwise 12 significant digits,
-  with the exponent written as `×10^n` (`1×10^-7`), never with `e`
-- Implicit multiplication: `2π`, `2(3)`, `2sin(30)`, `(1+2)(3+4)`, `ee`,
-  `esin(30)`
-- Any non-finite intermediate value is an `Error`: `1÷(1÷0)`, `1÷tan(90)`,
-  `1÷171!`
-- Trig: DEG angles are reduced exactly (mod 360), so multiples of 90° are
-  exact (`cos(90)=0`, `sin(180)=0`), `tan(90)` / `tan(270)` report `Error`, and
-  large angles keep full accuracy. In RAD, a result below the rounding error of
-  the argument is 0 (`sin(π)=0`, `tan(π÷2)` → `Error`). `tan` and inverse-trig
-  results within 1e-14 (relative) of a nonzero integer snap to it
-  (`asin(0.5)=30`, `tan(45)=1`).
-- Functions require parentheses: a malformed `√9` or `sin30` reports `Error`
-  rather than silently evaluating `sqrt(9)` / `sin(30)`
-- A second decimal point in the same number is ignored on entry and rejected
-  by the parser (no `1.2.3`)
-- Live preview of the result while typing; `±` negates the trailing operand
-  (number, parenthesised group, function result, constant, `Ans`, factorial).
-  An operand joined by implicit multiplication gets an explicit `×`:
-  `2π` → `2×−π`.
-- Keyboard: digits, `.` or `,` (decimal point), `+ - * / ^ % ! ( )`,
-  `Enter`/`=`, `Backspace`, `Escape`. A mouse click on a key leaves focus on the
-  calculator, so `Enter` after clicks evaluates instead of repeating the key.
+- Arithmetic `+ − × ÷`, power, modulo, factorial, parentheses.
+- `sin cos tan asin acos atan` in degrees or radians, `√`, `ln`, `log`
+  (base 10), constants `π` and `e`.
+- Live preview of the result while typing.
+- `Ans`: after `=`, an operator continues from the full-precision result
+  (`Ans×2`, `Ans^2`).
+- Implicit multiplication: `2π`, `2(3)`, `2sin(30)`, `(1+2)(3+4)`.
+- `±` negates the trailing operand.
+- Mouse, touch and physical keyboard input.
+- One file, `calculator.html`, with inline CSS and JavaScript. The math engine
+  is a tokenizer, a shunting-yard parser (RPN) and a stack evaluator; the keypad
+  is plain DOM built from a `KEYS` table.
 
-## Known limitations (by design)
+## Use in a Moodle quiz
 
-- `%` uses JavaScript remainder semantics: `−5 % 3 = −2` (sign follows the
-  dividend), not Euclidean modulo.
-- A negative base with a fractional exponent reports `Error` (e.g. `(−8)^(1÷3)`),
-  since `Math.pow` returns `NaN` there — real odd roots of negatives aren't
-  computed.
-- No autofocus on load, to avoid taking focus from the quiz page. Standalone
-  and inline, keys work without it; in an iframe, a click on the calculator
-  is needed first.
-- Inline embedding shares CSS/IDs with the host page — use an iframe.
+The calculator is embedded with an `<iframe>` written in the text of a question
+or of a Description item (HTML source view of the editor):
+
+```html
+<iframe src="CALCULATOR_URL" title="Scientific calculator" width="420" height="640" style="border:0;max-width:100%"></iframe>
+```
+
+`CALCULATOR_URL` is the address of a copy of `calculator.html` that the exam
+machines can reach.
+
+- **Size.** The page measures 420 × 602 px with an empty display. Each wrapped
+  line of a long expression adds 35 px; beyond the frame height the page
+  scrolls inside the frame.
+- **Keyboard.** Keys reach the calculator once the frame has focus, i.e. after
+  a click on it.
+- **State.** Expression, `Ans` and angle mode live in the page and reset when
+  the quiz page changes.
+- **Isolation.** The iframe keeps the calculator's stylesheet and element IDs
+  apart from the quiz page. Pasting the file's HTML directly into a question
+  is not supported: the stylesheet is global (`html`, `body`, `*`, `button`) and
+  would restyle the quiz page.
+
+## Keyboard
+
+| Key | Action |
+|-----|--------|
+| `0`–`9` | digit |
+| `.` or `,` | decimal point |
+| `+` `-` `*` `/` `^` `%` `!` `(` `)` | operator or parenthesis (`%` is modulo) |
+| `Enter` or `=` | evaluate |
+| `Backspace` | delete the last character (`Ans` as one token) |
+| `Escape` | clear |
+
+Functions, constants, `±` and the DEG/RAD toggle are on-screen keys only.
+
+A mouse click on a key leaves keyboard focus on the calculator, so `Enter`
+after clicks evaluates instead of repeating the clicked key. `Enter` on a key
+reached with `Tab` activates that key. The listener ignores `Ctrl`/`Cmd`/`Alt`
+combinations.
+
+## Calculation rules
+
+- **Results.** Integers below 2^53 are shown in full; other values with 12
+  significant digits. Exponents are written as `×10^n` (`1×10^-7`), never with
+  `e`, which is Euler's number.
+- **Precedence.** `!`, then `^` (right-associative), then unary minus, then
+  `× ÷ %`, then `+ −`: `−2^2 = −4`, `2^3^2 = 512`. Implicit multiplication has
+  the precedence of `×`.
+- **Functions** require parentheses: `√9` and `sin30` are errors.
+- **Errors.** Any undefined or non-finite intermediate value gives `Error`:
+  `1÷0`, `1÷(1÷0)`, `ln(0)`, `tan(90)`, `171!`.
+- **Degrees.** Angles are reduced exactly modulo 360, so `cos(90) = 0`,
+  `sin(180) = 0` and `tan(90)` is an error.
+- **Radians.** A result below the rounding error of the argument is 0, so
+  `sin(π) = 0` and `tan(π÷2)` is an error.
+- **Rounding of trig results.** `tan` and inverse trigonometric results within
+  1e-14 (relative) of a nonzero integer are rounded to it: `asin(0.5) = 30`,
+  `tan(45) = 1`.
+- **Factorial** is defined for the integers 0 to 170.
+- **`Ans`** holds the unrounded result of the last `=` and behaves as one
+  operand: after `3−8 =`, `Ans^2` is 25. A digit, `.`, `(`, function or constant
+  typed after `=` starts a new expression.
+- **`±`** negates the trailing operand (number, parenthesised group, function
+  call, constant, `Ans`, factorial). An operand joined by implicit
+  multiplication gets an explicit `×`: `2π` becomes `2×−π`.
+- **Decimal point.** A second point in the same number is ignored on entry.
+
+## Limitations
+
+- `%` (key `mod`) uses JavaScript remainder semantics: `−5 % 3 = −2`; the sign
+  follows the dividend.
+- A negative base with a fractional exponent is an error: `(−8)^(1÷3)`.
+- `exp` and `abs` exist in the parser and have no key.
+- No autofocus on load: inside an iframe, keyboard input needs a click on the
+  calculator first.
+- Browser checks ran in Chrome (Chromium, the engine of Safe Exam Browser on
+  Windows). WebKit, the engine of Safe Exam Browser on macOS and iOS, is
+  untested.
 
 ## Tests
 
@@ -82,17 +110,20 @@ and IDs before embedding inline. Two inline copies on one page collide on IDs.
 node tests/run.js
 ```
 
-Tests read `calculator.html` and evaluate its function blocks directly, so they
-always exercise the shipped source (no copy to drift). Suites:
+Node.js, no dependencies. The suites read `calculator.html` and evaluate its
+function blocks, so they run against the shipped file.
 
-- `tests/engine.test.js` — arithmetic, precedence/associativity, unary minus,
-  trig (deg/rad, exact quadrants, poles), logs/roots/factorial, implicit
-  multiplication, name splitting, `Ans`, non-finite intermediates, error
-  handling, formatting, tokenizer.
-- `tests/ui.test.js` — `toggleSign`, `equals` and `Ans` chaining, the
-  `justEvaluated` continuation rule, `insert`, `del`, `clearAll`, rendered
-  display text.
-- `tests/harness.js` — source extraction + a small assertion framework.
+- `tests/engine.test.js`: arithmetic, precedence and associativity, unary
+  minus, trigonometry (degrees, radians, exact quadrants, poles), logarithms,
+  roots, factorial, implicit multiplication, name splitting, `Ans`, non-finite
+  intermediates, error handling, formatting, tokenizer.
+- `tests/ui.test.js`: sign toggle, `=` and `Ans` chaining, continuation after a
+  result, insertion, deletion, clearing, rendered display text.
+- `tests/harness.js`: source extraction and a small assertion framework.
 
-Keyboard and focus behaviour (click focus, `Enter`, inline and iframe
-embedding) needs a browser and is not covered by the Node suites.
+Keyboard, focus and layout behaviour needs a browser and is not covered by the
+Node suites.
+
+## License
+
+[MIT](LICENSE)

@@ -1,5 +1,9 @@
-# Ignore all hidden files and directories (.agents, .codex, .DS_Store, editor dirs, ...)
+# Ignore all hidden files and directories (.DS_Store, editor dirs, ...)
 .*
 
-# ...except this file itself.
+# ...except this file and the GitHub Pages marker (disables the Jekyll build).
 !.gitignore
+!.nojekyll
+
+# Local working notes and scripts.
+tasks/
