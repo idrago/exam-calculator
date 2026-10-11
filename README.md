@@ -4,11 +4,14 @@ Scientific calculator in a single HTML file, built for Moodle quizzes taken in
 Safe Exam Browser. No network requests, no storage, no `eval()`, no
 dependencies.
 
-**Live demo:** <https://idrago.github.io/exam-calculator/> shows the calculator in
-a pop-up-style window. The calculator page itself is
+<a href="https://idrago.github.io/exam-calculator/"><img src="docs/open-calculator.svg" alt="Open the calculator" width="230" height="46"></a>
+
+The button and the image open the live demo,
+<https://idrago.github.io/exam-calculator/>: the calculator in a pop-up-style
+window. The calculator page itself is
 [calculator.html](https://idrago.github.io/exam-calculator/calculator.html).
 
-<img src="docs/calculator.png" alt="Exam Calculator showing 2sin(30)+√(16) = 5" width="340">
+<a href="https://idrago.github.io/exam-calculator/"><img src="docs/calculator.png" alt="Exam Calculator showing 2sin(30)+√(16) = 5" width="340"></a>
 
 ## Features
 
