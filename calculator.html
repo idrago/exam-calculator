@@ -122,13 +122,15 @@
 /* =====================================================================
    Exam Calculator — single file, no network, no storage, no eval().
    Math engine: tokenizer -> shunting-yard (RPN) -> stack evaluator.
-   You can read every line; nothing here reaches outside the page.
    ===================================================================== */
 
 /* ---- 1. Math engine -------------------------------------------------- */
 const FUNCS  = new Set(['sin','cos','tan','asin','acos','atan','sqrt','ln','log','exp','abs']);
 const CONSTS = { pi: Math.PI, e: Math.E };
 const PREC   = { 'u-':4, '^':5, '*':3, '/':3, '%':3, '+':2, '-':2 };
+// Every name the tokenizer accepts ("ans" = result of the last "="), longest
+// first, so a run of letters splits greedily: "esin" -> e, sin; "exp" stays exp.
+const NAMES  = [...FUNCS, ...Object.keys(CONSTS), 'ans'].sort((a,b)=>b.length-a.length);
 
 // Replace display glyphs with parser-readable ASCII / names.
 function normalize(s){
@@ -150,11 +152,14 @@ function tokenize(str){
     if(dig(c)||c==='.'){
       let j=i,dot=false;
       while(j<str.length && (dig(str[j])||(str[j]==='.'&&!dot))){ if(str[j]==='.')dot=true; j++; }
+      if(str[j]==='.') throw new Error('Unexpected "."');   // 1.2.3
       out.push({t:'num',v:parseFloat(str.slice(i,j))}); i=j; continue;
     }
     if(alp(c)){
-      let j=i; while(j<str.length && alp(str[j])) j++;
-      out.push({t:'name',v:str.slice(i,j).toLowerCase()}); i=j; continue;
+      const rest=str.slice(i).toLowerCase();
+      const name=NAMES.find(n=>rest.startsWith(n));
+      if(!name){ let j=i; while(j<str.length && alp(str[j])) j++; throw new Error('Unknown "'+str.slice(i,j)+'"'); }
+      out.push({t:'name',v:name}); i+=name.length; continue;
     }
     if('+-*/^%!()'.indexOf(c)>=0){ out.push({t:'op',v:c}); i++; continue; }
     throw new Error('Unexpected "'+c+'"');
@@ -162,7 +167,7 @@ function tokenize(str){
   return out;
 }
 
-function toRPN(tokens){
+function toRPN(tokens, ans){
   const out=[], ops=[];
   let prev=null; // 'val' | 'op' | 'open' | 'func' | null
   const unaryCtx = ()=> prev===null||prev==='op'||prev==='open'||prev==='func';
@@ -196,8 +201,7 @@ function toRPN(tokens){
     if(tk.t==='num'){ out.push({t:'num',v:tk.v}); prev='val'; continue; }
     if(tk.t==='name'){
       if(FUNCS.has(tk.v)){ ops.push({t:'func',v:tk.v}); prev='func'; funcPending=true; }
-      else if(tk.v in CONSTS){ out.push({t:'num',v:CONSTS[tk.v]}); prev='val'; }
-      else throw new Error('Unknown "'+tk.v+'"');
+      else { out.push({t:'num',v: tk.v==='ans' ? ans : CONSTS[tk.v]}); prev='val'; }
       continue;
     }
     const op=tk.v;
@@ -223,34 +227,63 @@ function toRPN(tokens){
   return out;
 }
 
+// Snap x to a nonzero integer within 1e-14 (relative) of it, removing
+// conversion noise: asin(0.5)=30 (not 30.000000000000004), tan(45)=1, sqrt(2)^2 -> 2.
+function snapInt(x){
+  const r=Math.round(x);
+  return r!==0 && Math.abs(x-r) <= 1e-14*Math.abs(r) ? r : x;
+}
+
 function factorial(n){
+  n=snapInt(n);
   if(n<0 || !Number.isInteger(n)) return NaN;
   if(n>170) return Infinity;
   let r=1; for(let k=2;k<=n;k++) r*=k; return r;
 }
 
+// [sin, cos] of a in degrees. a is reduced exactly to d in [-45°, 45°] around
+// the nearest multiple of 90° (q quadrants) and the quadrant symmetry applied:
+// multiples of 90° give exact 0 / ±1, and accuracy holds near them.
+function sinCosDeg(a){
+  const r=a%360, q=Math.round(r/90), d=(r-90*q)*Math.PI/180;
+  const s=Math.sin(d), c=Math.cos(d);
+  switch(((q%4)+4)%4){
+    case 0:  return [ s,  c];
+    case 1:  return [ c, -s];
+    case 2:  return [-s, -c];
+    default: return [-c,  s];
+  }
+}
+
+// sin / cos / tan; tan = sin/cos, so a zero cosine is a division by zero
+// (tan(90°) undefined). In RAD, a value below the rounding error of the
+// argument is 0: sin(π) = 1.2e-16 -> 0, cos(π÷2) -> 0.
+function trig(f, a, deg){
+  let s, c;
+  if(deg) [s,c]=sinCosDeg(a);
+  else {
+    const z = v=> Math.abs(v) <= 4*Number.EPSILON*Math.abs(a) ? 0 : v;
+    s=z(Math.sin(a)); c=z(Math.cos(a));
+  }
+  return f==='sin' ? s : f==='cos' ? c : snapInt(s/c);
+}
+
 function evalRPN(rpn, deg){
   const st=[];
-  const toR = x=> deg ? x*Math.PI/180 : x;
+  // Every intermediate value must be finite: 1÷(1÷0) is an error, not 0.
+  const push = v=>{ if(!Number.isFinite(v)) throw new Error('Error'); st.push(v); };
   const frR = x=> deg ? x*180/Math.PI : x;
-  // Snap values within 1e-10 of an integer to that integer, so exact angles
-  // read cleanly: cos(90°)=0, sin(90°)=1, asin(0.5)=30 — not 6.1e-17 etc.
-  const clean = x=>{ if(!isFinite(x)) return x; const r=Math.round(x); return Math.abs(x-r)<1e-10 ? r : x; };
   for(const tk of rpn){
-    if(tk.t==='num'){ st.push(tk.v); continue; }
+    if(tk.t==='num'){ push(tk.v); continue; }
     if(tk.t==='func'){
       const a=st.pop(); let r;
       switch(tk.v){
-        case 'sin': r=clean(Math.sin(toR(a))); break;
-        case 'cos': r=clean(Math.cos(toR(a))); break;
-        case 'tan':
-          // tan is undefined at 90° + k·180° (cos=0); force Error there.
-          if(deg && Math.abs(((a%180)+180)%180 - 90) < 1e-9) r=Infinity;
-          else r=clean(Math.tan(toR(a)));
-          break;
-        case 'asin':r=clean(frR(Math.asin(a))); break;
-        case 'acos':r=clean(frR(Math.acos(a))); break;
-        case 'atan':r=clean(frR(Math.atan(a))); break;
+        case 'sin':
+        case 'cos':
+        case 'tan': r=trig(tk.v, a, deg); break;
+        case 'asin':r=snapInt(frR(Math.asin(a))); break;
+        case 'acos':r=snapInt(frR(Math.acos(a))); break;
+        case 'atan':r=snapInt(frR(Math.atan(a))); break;
         case 'sqrt':r=Math.sqrt(a); break;
         case 'ln':  r=Math.log(a); break;
         case 'log': r=Math.log10(a); break;
@@ -258,10 +291,10 @@ function evalRPN(rpn, deg){
         case 'abs': r=Math.abs(a); break;
         default: throw new Error('fn');
       }
-      st.push(r); continue;
+      push(r); continue;
     }
-    if(tk.v==='u-'){ st.push(-st.pop()); continue; }
-    if(tk.v==='!'){ st.push(factorial(st.pop())); continue; }
+    if(tk.v==='u-'){ push(-st.pop()); continue; }
+    if(tk.v==='!'){ push(factorial(st.pop())); continue; }
     const b=st.pop(), a=st.pop(); let r;
     switch(tk.v){
       case '+': r=a+b; break;
@@ -272,39 +305,43 @@ function evalRPN(rpn, deg){
       case '%': r=a%b; break; // modulo
       default: throw new Error('op');
     }
-    st.push(r);
+    push(r);
   }
   if(st.length!==1) throw new Error('Invalid');
   return st[0];
 }
 
-function compute(displayExpr, deg){
-  const rpn = toRPN(tokenize(normalize(displayExpr)));
-  const v = evalRPN(rpn, deg);
-  if(!isFinite(v)) throw new Error('Error');
-  return v;
+// ans: value of "Ans" (the full-precision result of the last "=").
+function compute(displayExpr, deg, ans){
+  return evalRPN(toRPN(tokenize(normalize(displayExpr)), ans), deg);
 }
 
+// Display text: exact integers in full; otherwise 12 significant digits
+// (strips binary float noise), with the exponent written as ×10^n, never as
+// "e" (which is Euler's number here).
 function fmt(x){
-  const r = parseFloat(x.toPrecision(12)); // strip binary float noise
-  return String(r);
+  if(Number.isSafeInteger(x)) return String(x);
+  const [m, e] = x.toPrecision(12).split('e');
+  return String(parseFloat(m)) + (e ? '\u00D710^' + Number(e) : '');
 }
 
 /* ---- 2. State + rendering ------------------------------------------- */
 let expr = '';
+let ans = 0;             // full-precision result of the last "=", shown as "Ans"
 let deg = true;          // angle mode: true=DEG, false=RAD
 let justEvaluated = false;
 
+const device    = document.querySelector('.device');
 const exprEl    = document.getElementById('expr');
 const previewEl = document.getElementById('preview');
 
 function render(){
-  exprEl.textContent = expr === '' ? '0' : expr;
   previewEl.classList.remove('err');
+  if(justEvaluated){ exprEl.textContent = fmt(ans); previewEl.textContent=''; return; }
+  exprEl.textContent = expr === '' ? '0' : expr;
   if(expr===''){ previewEl.textContent=''; return; }
   try{
-    const v = compute(expr, deg);
-    previewEl.textContent = '= ' + fmt(v);
+    previewEl.textContent = '= ' + fmt(compute(expr, deg, ans));
   }catch(_){
     previewEl.textContent = '';
   }
@@ -312,8 +349,8 @@ function render(){
 
 function insert(s){
   if(justEvaluated){
-    // After "=", a binary/postfix operator continues from the result; anything
-    // that begins a new value (digit, ., (, function, \u221A, \u03C0, e) starts fresh.
+    // After "=" (expr is "Ans"), a binary/postfix operator continues from Ans;
+    // anything that begins a new value (digit, ., (, function, \u221A, \u03C0, e) starts fresh.
     const continues = /^[-+*/^!%\u2212\u00D7\u00F7]$/.test(s);
     if(!continues) expr='';
     justEvaluated=false;
@@ -328,45 +365,45 @@ function insert(s){
 }
 
 function clearAll(){ expr=''; justEvaluated=false; render(); }
-function del(){ if(expr){ expr=expr.slice(0,-1); justEvaluated=false; render(); } }
+function del(){
+  if(!expr) return;
+  expr = expr.slice(0, /Ans$/.test(expr) ? -3 : -1);   // "Ans" is one token
+  justEvaluated=false; render();
+}
 
 // Index where the trailing operand begins: a number, a parenthesised/function
-// group ending in ")", or a constant (\u03C0 / e / pi). -1 if there is none.
+// group ending in ")", or a constant (\u03C0 / e / Ans), each with any trailing
+// "!". -1 if there is none.
 function operandStart(s){
-  if(!s) return -1;
-  const last = s[s.length-1];
-  if(last===')'){                       // walk back to the matching "("
-    let depth=0, i=s.length-1;
+  const t = s.replace(/!+$/,'');         // 5! -> negate the factorial as a whole
+  if(!t) return -1;
+  if(t[t.length-1]===')'){              // walk back to the matching "("
+    let depth=0, i=t.length-1;
     for(; i>=0; i--){
-      if(s[i]===')') depth++;
-      else if(s[i]==='('){ if(--depth===0) break; }
+      if(t[i]===')') depth++;
+      else if(t[i]==='('){ if(--depth===0) break; }
     }
     if(i<0) return -1;                   // unbalanced \u2014 bail out
-    let j=i;                             // absorb a preceding function name
-    while(j>0 && /[a-zA-Z]/.test(s[j-1])) j--;
+    let j=i;                             // absorb a preceding function name or \u221A
+    while(j>0 && /[a-zA-Z\u221A]/.test(t[j-1])) j--;
     return j;
   }
-  const num = s.match(/(\d*\.?\d+)$/);
-  if(num) return s.length - num[0].length;
-  if(last==='\u03C0') return s.length-1;            // \u03C0
-  const word = s.match(/([a-zA-Z]+)$/);             // e / pi
-  if(word) return s.length - word[0].length;
-  return -1;
+  const m = t.match(/(\d+\.?\d*|\.\d+|\u03C0|[a-zA-Z]+)$/);   // number, \u03C0, e / Ans
+  return m ? t.length - m[0].length : -1;
 }
 
 function toggleSign(){
   const start = operandStart(expr);
   if(start<0) return;
-  const before = expr[start-1];
-  if(before==='\u2212' || before==='-'){
-    const b2 = expr[start-2];
-    if(start-1===0 || '+\u2212-\u00D7\u00F7*/^(%'.indexOf(b2)>=0){
-      expr = expr.slice(0,start-1) + expr.slice(start);   // remove leading sign
-    } else {
-      expr = expr.slice(0,start) + '\u2212' + expr.slice(start); // negate operand
-    }
+  const before = expr[start-1], b2 = expr[start-2];
+  if((before==='\u2212' || before==='-') &&
+     (start===1 || '+\u2212-\u00D7\u00F7*/^(%'.indexOf(b2)>=0)){
+    expr = expr.slice(0,start-1) + expr.slice(start);   // remove a unary sign
   } else {
-    expr = expr.slice(0,start) + '\u2212' + expr.slice(start);
+    // An operand joined by implied multiplication (2\u03C0, 2(3)) gets an explicit
+    // \u00D7, so the sign negates it instead of becoming a subtraction.
+    const joined = /[0-9.)!\u03C0a-zA-Z]/.test(before || '');
+    expr = expr.slice(0,start) + (joined ? '\u00D7\u2212' : '\u2212') + expr.slice(start);
   }
   justEvaluated=false; render();
 }
@@ -374,11 +411,10 @@ function toggleSign(){
 function equals(){
   if(expr==='') return;
   try{
-    const v = compute(expr, deg);
-    expr = fmt(v);
-    previewEl.textContent='';
+    ans = compute(expr, deg, ans);
+    expr = 'Ans';
     justEvaluated=true;
-    exprEl.textContent = expr;
+    render();
   }catch(_){
     previewEl.classList.add('err');
     previewEl.textContent='Error';
@@ -388,7 +424,7 @@ function equals(){
 /* ---- 3. Keypad definition ------------------------------------------- */
 // kind: num | op | fn | util | mode | eq ; ins: string to insert
 const KEYS = [
-  {label:'DEG', kind:'mode', act:'mode', aria:'Angle mode'},
+  {label:'DEG', kind:'mode', act:'mode'},
   {label:'(',   kind:'op',  ins:'('},
   {label:')',   kind:'op',  ins:')'},
   {label:'\u232B', kind:'util', act:'del', aria:'Delete'},
@@ -434,45 +470,42 @@ const KEYS = [
 ];
 
 const pad = document.getElementById('pad');
-const modeButtons = [];
+let modeBtn = null;
 for(const k of KEYS){
   const b=document.createElement('button');
   b.type='button';           // never submit a surrounding <form> (Moodle quiz)
   b.className=k.kind;
-  b.setAttribute('aria-label', k.aria || k.label);
-  if(k.kind==='mode'){
-    b.innerHTML = '<span class="on">DEG</span> · RAD';
-    modeButtons.push(b);
-  } else {
-    b.textContent = k.label;
-  }
-  b.addEventListener('click', ()=>{
+  if(k.kind==='mode') modeBtn=b;
+  else { b.setAttribute('aria-label', k.aria || k.label); b.textContent=k.label; }
+  b.addEventListener('click', (ev)=>{
     if(k.act==='mode')      toggleMode();
     else if(k.act==='del')  del();
     else if(k.act==='clear')clearAll();
     else if(k.act==='sign') toggleSign();
     else if(k.act==='equals')equals();
     else insert(k.ins);
+    // A pointer click (detail > 0) moves focus from the key to the device:
+    // Chromium focuses clicked buttons, and Enter/Space would repeat the key.
+    if(ev.detail>0) device.focus({preventScroll:true});
   });
   pad.appendChild(b);
 }
 
-function toggleMode(){
-  deg=!deg;
-  for(const b of modeButtons){
-    b.innerHTML = deg ? '<span class="on">DEG</span> · RAD'
-                      : 'DEG · <span class="on">RAD</span>';
-  }
-  render();
+// DEG/RAD label with the active mode highlighted; the aria-label names it.
+function renderMode(){
+  modeBtn.innerHTML = deg ? '<span class="on">DEG</span> · RAD'
+                          : 'DEG · <span class="on">RAD</span>';
+  modeBtn.setAttribute('aria-label', 'Angle mode: ' + (deg ? 'degrees' : 'radians'));
 }
 
+function toggleMode(){ deg=!deg; renderMode(); render(); }
+
 /* ---- 4. Physical keyboard ------------------------------------------- */
-// The listener is on window so the keyboard works immediately (no click
-// needed) when the calculator is standalone or in an <iframe> — the
-// recommended Moodle embedding. To stay safe when pasted *inline* into a
-// quiz page, it yields whenever the user is editing another field, so it
-// never steals keystrokes from quiz inputs.
-const device = document.querySelector('.device');
+// The listener is on window, so keys work without a click when the calculator
+// is the page itself or is pasted inline. Inside an <iframe> (the recommended
+// Moodle embedding), keys reach it only once the iframe has focus, i.e. after
+// a click on it. Inline, it yields while another field is being edited, so
+// quiz inputs keep their keystrokes.
 
 // True when focus is on an editable element that is NOT our calculator.
 function editingElsewhere(el, root){
@@ -483,13 +516,16 @@ function editingElsewhere(el, root){
 
 window.addEventListener('keydown', (ev)=>{
   if(ev.ctrlKey || ev.metaKey || ev.altKey) return;        // leave shortcuts alone
-  if(editingElsewhere(document.activeElement, device)) return;
+  const el=document.activeElement;
+  if(editingElsewhere(el, device)) return;
   const k=ev.key;
-  // A focused calculator button handles its own Enter/Space activation.
-  if(k==='Enter' && ev.target && ev.target.tagName==='BUTTON') return;
+  // Enter evaluates only when focus is on the device or on no element; a
+  // focused button or link (calculator key or host page) keeps its own Enter.
+  if(k==='Enter' && el && el!==device && el!==document.body && el!==document.documentElement) return;
   if(k>='0' && k<='9'){ insert(k); ev.preventDefault(); return; }
   switch(k){
-    case '.': insert('.'); break;
+    case '.':
+    case ',': insert('.'); break;          // decimal comma: it/de/pt layouts
     case '+': insert('+'); break;
     case '-': insert('\u2212'); break;
     case '*': insert('\u00D7'); break;
@@ -508,6 +544,7 @@ window.addEventListener('keydown', (ev)=>{
   ev.preventDefault();
 });
 
+renderMode();
 render();
 })();
 </script>

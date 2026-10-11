@@ -1,11 +1,12 @@
 "use strict";
 /* Shared test harness.
  *
- * Tests run against the REAL source: we read calculator.html and eval the
- * relevant function blocks, so the suite can never drift from a stale copy.
+ * Tests run against the shipped source: calculator.html is read and its
+ * function blocks are evaluated, so the suite cannot drift from a stale copy.
  *
  *   loadEngine() -> pure math engine (no DOM)
- *   loadUI()     -> stateful string helpers (toggleSign / insert / del / ...)
+ *   loadUI()     -> engine + state helpers (insert / equals / toggleSign / del /
+ *                   render ...) with stub display elements
  *   new Tester() -> tiny assertion framework with a final report()
  */
 const fs = require('fs');
@@ -31,28 +32,37 @@ function grab(name) {
 }
 
 // The DOM-free engine block (between the two section banners).
-function loadEngine() {
+function engineSrc() {
   const start = html.indexOf('const FUNCS');
   const end   = html.indexOf('/* ---- 2. State');
   assert(start > 0 && end > start, 'cannot locate engine block');
-  const src = html.slice(start, end);
-  return new Function(src + '\nreturn {compute, fmt, tokenize, toRPN, normalize, factorial, evalRPN};')();
+  return html.slice(start, end);
 }
 
-// The stateful string helpers, wired to a mutable `expr` with a no-op render.
+function loadEngine() {
+  return new Function(engineSrc() + '\nreturn {compute, fmt, tokenize, toRPN, normalize, factorial, evalRPN};')();
+}
+
+// Engine + state helpers, with stub #expr / #preview elements so the real
+// render() runs; exprText()/previewText() read what the display shows.
 function loadUI() {
-  const src = ['operandStart', 'toggleSign', 'insert', 'clearAll', 'del', 'editingElsewhere']
+  const src = ['render', 'operandStart', 'toggleSign', 'insert', 'clearAll', 'del', 'equals', 'editingElsewhere']
     .map(grab).join('\n');
   return new Function(`
-    let expr = '', justEvaluated = false;
-    function render(){}
+    ${engineSrc()}
+    let expr = '', ans = 0, deg = true, justEvaluated = false;
+    const stub = () => ({ textContent: '', classList: { add() {}, remove() {} } });
+    const exprEl = stub(), previewEl = stub();
     ${src}
     return {
       set:  (e) => { expr = e; justEvaluated = false; },
-      setEvaluated: (e) => { expr = e; justEvaluated = true; },
       get:  () => expr,
+      ans:  () => ans,
+      exprText: () => exprEl.textContent,
+      previewText: () => previewEl.textContent,
       isJustEvaluated: () => justEvaluated,
-      operandStart, toggleSign, insert, clearAll, del, editingElsewhere
+      value: (e) => fmt(compute(e, deg, ans)),
+      operandStart, toggleSign, insert, clearAll, del, equals, editingElsewhere
     };`)();
 }
 

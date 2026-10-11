@@ -65,7 +65,7 @@ module.exports = function run(t) {
   eq('sin(180)', 0);
   eq('cos(0)', 1);
   eq('cos(60)', 0.5);
-  eq('cos(90)', 0);                         // was 6.12e-17 before snapping
+  eq('cos(90)', 0);                         // exact, not 6.12e-17
   eq('cos(180)', -1);
   eq('tan(0)', 0);
   eq('tan(45)', 1);
@@ -172,7 +172,7 @@ module.exports = function run(t) {
   err('1+'+U.mul+'2');                         // binary then binary -> Error
   err('3'+U.mul+U.div+'4');                    // op op -> Error
 
-  t.group('function must be followed by "(" (#4)');
+  t.group('function must be followed by "("');
   err(U.sqrt+'9');                             // √9 (deleted paren) -> Error, not sqrt(9)
   err(U.sqrt+'9+7');                           // not sqrt(9+7)
   err('sin30');                                // not sin(30)
@@ -197,7 +197,84 @@ module.exports = function run(t) {
   t.is(normalize('6'+U.div+'2'), '6/2', 'normalize ÷');
   t.is(normalize(U.minus+'4'), '-4', 'normalize −');
   t.is(tokenize('12.5').length, 1, 'one number token');
-  t.is(tokenize('1.2.3').length, 2, '1.2.3 -> two number tokens (1.2, .3)');
+  t.throws(() => tokenize('1.2.3'), '1.2.3 -> Error (second point in a number)');
   t.is(tokenize('sin').length, 1, 'function name single token');
   t.is(tokenize('   ').length, 0, 'whitespace -> no tokens');
+
+  t.group('letter runs split into known names (longest first)');
+  near('ee', Math.E * Math.E);
+  near('esin(30)', Math.E / 2);
+  eq('eln(e)', String(calc('e')));                    // e * ln(e) = e
+  near('exp(1)', Math.E);                              // exp, not e*xp
+  near('eexp(0)', Math.E);
+  near('2e', 2 * Math.E);
+  err('ex');                                           // x is not a name
+  err('sinx(30)');
+
+  // ---------------------------------------------------------------- //
+  t.group('formatting — exact integers, ×10^n exponent (no "e")');
+  t.is(fmt(1234567890123), '1234567890123', '13-digit integer in full');
+  t.is(fmt(2 ** 53 - 1), '9007199254740991', '2^53 - 1 in full');
+  t.is(fmt(2 ** 60), '1.15292150461' + U.mul + '10^18', 'beyond 2^53: 12 digits + exponent');
+  t.is(fmt(1e21), '1' + U.mul + '10^21', '1e21');
+  t.is(fmt(1e-7), '1' + U.mul + '10^-7', '1e-7');
+  t.is(fmt(1 / 3000000), '3.33333333333' + U.mul + '10^-7', '1/3000000');
+  t.is(fmt(-5), '-5', 'negative integer');
+  t.is(fmt(-0), '0', '-0 shows as 0');
+  t.is(fmt(123456789012.5), '123456789013', '12 significant digits, rounded');
+  for (const x of [1e-7, 1 / 3000000, 1e21, -2.5e-9, 2 ** 60]) {
+    near(fmt(x), x, true, Math.abs(x) * 1e-11);       // displayed text re-enters as the same value
+  }
+
+  // ---------------------------------------------------------------- //
+  t.group('Ans — atomic full-precision operand');
+  const withAns = (expr, ans, exp, deg = true) => t.eq(() => fmt(compute(expr, deg, ans)), String(exp), `${expr} with Ans=${ans}`);
+  withAns('Ans^2', -5, 25);                            // (−5)^2, not −(5^2)
+  withAns('Ans' + U.mul + '3', 1 / 3, 1);              // full precision, not 0.999999999999
+  withAns('Ans%7', 2 ** 50, 4);
+  withAns('2Ans', 3, 6);                               // implicit multiplication
+  withAns(U.minus + 'Ans', 1e-7, '-1' + U.mul + '10^-7');
+  withAns('Ans', 1234567890123, 1234567890123);
+  t.throws(() => compute('Ans!', true, -3), 'Ans! with Ans=-3 -> Error');
+  t.throws(() => compute('Ans', true), 'Ans without a value -> Error');
+
+  // ---------------------------------------------------------------- //
+  t.group('non-finite intermediate values are errors');
+  err('1' + U.div + '(1' + U.div + '0)');
+  err('5+1' + U.div + '(1' + U.div + '0)');
+  err('atan(1' + U.div + '0)');
+  err('1' + U.div + 'tan(90)');
+  err('1' + U.div + '171!');
+  err('0' + U.mul + 'ln(0)');
+
+  t.group('trig — exact quadrants and accuracy near them');
+  eq('sin(' + U.minus + '90)', -1);
+  eq('cos(270)', 0);
+  eq('cos(' + U.minus + '180)', -1);
+  eq('sin(720)', 0);
+  eq('tan(' + U.minus + '45)', -1);
+  eq('tan(135)', -1);
+  eq('sin(30)', 0.5);
+  eq('sin(150)', 0.5);
+  err('tan(450)');
+  near('tan(89.99999999999)', 180 / (Math.PI * (90 - 89.99999999999)), true, 1e-12 * 5.73e12);   // finite, not Error
+  near('sin(179.9999999)', Math.sin((180 - 179.9999999) * Math.PI / 180), true, 1e-21);
+  near('cos(90.0000001)', -Math.sin((90.0000001 - 90) * Math.PI / 180), true, 1e-21);
+  eq('sin(999999999750)', 0.5);                        // 360·2777777777 + 30, reduced exactly
+
+  t.group('trig — radian mode, poles and tiny arguments');
+  err('tan(' + U.pi + U.div + '2)', false);
+  err('tan(3' + U.pi + U.div + '2)', false);
+  eq('tan(' + U.pi + ')', 0, false);
+  eq('tan(' + U.pi + U.div + '4)', 1, false);
+  eq('cos(' + U.pi + U.div + '2)', 0, false);
+  eq('sin(0.00000000005)', '5' + U.mul + '10^-11', false);   // not snapped to 0
+  eq('atan(0.00000000001)', '1' + U.mul + '10^-11', false);
+  eq('sin(3.14159265359)', '-2.0682310711' + U.mul + '10^-13', false);   // 12-digit π is not π
+
+  t.group('factorial of a value within rounding of an integer');
+  eq('(sqrt(2)^2)!', 2);
+  eq('asin(0.5)!', String(calc('30!')));
+  err('2.5!');
+  err('(' + U.minus + '1)!');
 };
