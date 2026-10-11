@@ -6,26 +6,54 @@
 <title>Exam Calculator — demo</title>
 <style>
   :root{
-    --bg:     #e7e9ee;   /* page, same as calculator.html */
-    --case:   #14161b;   /* button fill = calculator body  */
-    --accent: #f0b35b;
+    --page:   #f5f6f8;
     --text:   #1b1e24;
     --dim:    #59616d;
+    --bar:    #dfe2e8;   /* title bar of the calculator window */
+    --edge:   #c3c8d0;
+    --case:   #14161b;   /* button fill = calculator body      */
+    --accent: #f0b35b;
   }
+  *{box-sizing:border-box;}
+  [hidden]{display:none !important;}
   body{
-    margin:0;min-height:100vh;display:flex;
-    background:var(--bg);color:var(--text);
+    margin:0;padding:32px 16px 40px;
+    background:var(--page);color:var(--text);
     font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
   }
-  main{margin:auto;max-width:34rem;padding:24px;}
-  h1{font-size:1.6rem;margin:0 0 .4em;}
-  p{line-height:1.5;margin:0 0 1em;}
-  .open{
-    display:inline-block;padding:12px 20px;border-radius:12px;
-    background:var(--case);color:var(--accent);font-weight:700;text-decoration:none;
+  main{max-width:36rem;margin:0 auto;text-align:center;}
+  h1{font-size:1.7rem;margin:0 0 .3em;}
+  p{line-height:1.5;margin:0 0 1.2em;}
+
+  /* ---- Calculator window: the pop-up, drawn inside the page ------------ */
+  .window{
+    width:422px;max-width:100%;margin:0 auto 1.4em;   /* 420 px frame + border */
+    border:1px solid var(--edge);border-radius:10px;overflow:hidden;
+    background:#fff;box-shadow:0 18px 44px rgba(20,22,27,.22);
+    text-align:left;
   }
-  .open:hover{filter:brightness(1.25);}
-  .open:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  .bar{
+    display:flex;align-items:center;justify-content:space-between;
+    height:34px;padding:0 6px 0 14px;
+    background:var(--bar);border-bottom:1px solid var(--edge);
+    font-size:.82rem;font-weight:600;color:#3a404a;
+  }
+  .bar button{
+    width:26px;height:24px;padding:0;border:0;border-radius:6px;
+    background:transparent;color:#3a404a;font-size:18px;line-height:1;cursor:pointer;
+  }
+  .bar button:hover{background:#c9ced7;}
+  .window iframe{display:block;width:100%;height:610px;border:0;}
+
+  /* ---- Actions --------------------------------------------------------- */
+  .actions{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;}
+  .btn{
+    display:inline-block;padding:11px 18px;border:0;border-radius:12px;
+    background:var(--case);color:var(--accent);
+    font:inherit;font-weight:700;text-decoration:none;cursor:pointer;
+  }
+  .btn:hover{filter:brightness(1.25);}
+  .btn:focus-visible,.bar button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .note{color:var(--dim);font-size:.875rem;}
 </style>
 </head>
@@ -33,23 +61,53 @@
 <main>
   <h1>Exam Calculator</h1>
   <p>Scientific calculator in a single HTML file, built for Moodle quizzes taken in Safe Exam Browser.</p>
-  <p><a class="open" id="open" href="calculator.html">Open the calculator</a></p>
-  <p class="note">Opens a 420 × 610 px pop-up window, the way Moodle opens a File resource whose display is set
-  to “In pop-up”. With pop-ups blocked, the link opens the calculator in this tab.</p>
-  <p class="note"><a href="https://github.com/idrago/exam-calculator">Source and documentation</a></p>
+
+  <section class="window" id="win" aria-label="Calculator window">
+    <div class="bar">
+      <span>Exam Calculator</span>
+      <button type="button" id="close" aria-label="Close the calculator">&times;</button>
+    </div>
+    <iframe id="frame" src="calculator.html" title="Scientific calculator"></iframe>
+  </section>
+
+  <p class="actions">
+    <button class="btn" type="button" id="show" hidden>Show the calculator</button>
+    <a class="btn" id="open" href="calculator.html">Open in a separate window</a>
+    <a href="https://github.com/idrago/exam-calculator">Source and documentation</a>
+  </p>
+  <p class="note">In a Moodle course the calculator is a File resource displayed “In pop-up”: a separate
+  420 × 610 px window. “Open in a separate window” makes the same <code>window.open()</code> call; with
+  pop-ups blocked it opens the calculator in this tab.</p>
 </main>
 <script>
-// The window.open() call Moodle generates for a File resource displayed
-// "In pop-up" with pop-up width 420 and height 610.
-document.getElementById('open').addEventListener('click', function(ev){
-  var w = window.open(this.href, '',
-    'width=420,height=610,toolbar=no,location=no,menubar=no,copyhistory=no,status=no,directories=no,scrollbars=yes,resizable=yes');
-  if(!w) return;               // pop-up blocked: the link is followed instead
-  ev.preventDefault();
-  // The content area of a pop-up can come out smaller than requested (Chrome 155
-  // on Linux: 553 px high for height=610); resize it to 420 x 610 once loaded.
-  w.addEventListener('load', function(){ w.resizeBy(420 - w.innerWidth, 610 - w.innerHeight); });
-});
+(function(){
+  var win = document.getElementById('win'), frame = document.getElementById('frame'),
+      show = document.getElementById('show');
+
+  // Keys go to the calculator without a click on it.
+  function focusCalculator(){ frame.contentWindow.focus(); }
+  frame.addEventListener('load', focusCalculator);
+
+  // Closing hides the window; the calculator keeps its state until the page is left.
+  document.getElementById('close').addEventListener('click', function(){
+    win.hidden = true; show.hidden = false; show.focus();
+  });
+  show.addEventListener('click', function(){
+    win.hidden = false; show.hidden = true; focusCalculator();
+  });
+
+  // The window.open() call Moodle generates for a File resource displayed
+  // "In pop-up" with pop-up width 420 and height 610.
+  document.getElementById('open').addEventListener('click', function(ev){
+    var w = window.open(this.href, '',
+      'width=420,height=610,toolbar=no,location=no,menubar=no,copyhistory=no,status=no,directories=no,scrollbars=yes,resizable=yes');
+    if(!w) return;               // pop-up blocked: the link is followed instead
+    ev.preventDefault();
+    // The content area of a pop-up can come out smaller than requested (Chrome 155
+    // on Linux: 553 px high for height=610); resize it to 420 x 610 once loaded.
+    w.addEventListener('load', function(){ w.resizeBy(420 - w.innerWidth, 610 - w.innerHeight); });
+  });
+})();
 </script>
 </body>
 </html>
